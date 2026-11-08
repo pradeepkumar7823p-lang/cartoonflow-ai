@@ -1,0 +1,11 @@
+{
+  "job_states":["Queued","Generating","Assembling","Complete","Failed"],
+  "scene_contract":{
+    "input":["prompt","character_reference_ids","duration_seconds"],
+    "output":"6-second MP4"
+  },
+  "final_contract":{
+    "inputs":["scene_mp4_files","voice_track","sfx_track","subtitles"],
+    "output":"final MP4"
+  }
+}
