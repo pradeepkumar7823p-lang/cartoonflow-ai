@@ -1,62 +1,273 @@
-from pathlib import Path
-import os, io, urllib.parse, subprocess, tempfile, asyncio
+import os
+import time
+import json
+import uuid
+import subprocess
 import requests
-from PIL import Image, ImageDraw, ImageFont
-import imageio_ffmpeg
+from pathlib import Path
 
-ROOT=Path(__file__).parent; OUT=ROOT/"outputs"; OUT.mkdir(exist_ok=True)
-FFMPEG=imageio_ffmpeg.get_ffmpeg_exe()
 
-def font(size):
-    for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf","/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"]:
-        if Path(p).exists(): return ImageFont.truetype(p,size)
-    return ImageFont.load_default()
+POLLO_URL = "https://pollo.ai/api/platform/v1/generation/pollo-ai/pollo-v2/video"
 
-def placeholder(prompt,size):
-    im=Image.new("RGB",size,(245,238,210)); d=ImageDraw.Draw(im)
-    d.text((60,60),"CartoonFlow AI",font=font(42),fill=(30,30,30))
-    import textwrap
-    d.text((60,140),"\n".join(textwrap.wrap(prompt,55)[:10]),font=font(24),fill=(55,55,55))
-    return im
 
-def ai_image(prompt,size):
-    key=os.environ.get("POLLINATIONS_API_KEY","").strip()
-    if not key: raise RuntimeError("POLLINATIONS_API_KEY नहीं मिला। Demo render चुनें या Streamlit Secrets में key जोड़ें।")
-    model=os.environ.get("POLLINATIONS_IMAGE_MODEL","black-forest-labs/flux.1-schnell")
-    url="https://gen.pollinations.ai/image/"+urllib.parse.quote(prompt,safe="")
-    r=requests.get(url,params={"model":model,"width":size[0],"height":size[1]},headers={"Authorization":f"Bearer {key}"},timeout=90)
-    r.raise_for_status(); return Image.open(io.BytesIO(r.content)).convert("RGB")
+def make_prompt(scene, characters, language):
+    char_text = "\n".join(
+        [
+            f"- {c['name']}: {c['role']}. Appearance: {c['look']}"
+            for c in characters
+        ]
+    )
 
-def scene_clip(img,out,seconds,size):
-    fps=24; frames=int(seconds*fps)
-    vf=f"scale={size[0]}:{size[1]},zoompan=z='min(zoom+0.0008,1.08)':d={frames}:s={size[0]}x{size[1]}:fps={fps}"
-    subprocess.run([FFMPEG,"-y","-loop","1","-i",str(img),"-t",str(seconds),"-vf",vf,"-r",str(fps),"-pix_fmt","yuv420p","-an",str(out)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    return f"""
+Create a high-quality 3D animated cartoon scene.
 
-def tts(text,lang,out):
-    import edge_tts
-    voice={"Hindi":"hi-IN-SwaraNeural","English":"en-US-AvaNeural","Hinglish":"hi-IN-SwaraNeural"}.get(lang,"hi-IN-SwaraNeural")
-    async def go(): await edge_tts.Communicate(text,voice=voice).save(str(out))
-    asyncio.run(go())
+VISUAL STYLE:
+Modern family-friendly 3D cartoon animation,
+colorful Indian village environment,
+smooth character animation,
+expressive faces,
+cinematic lighting,
+soft realistic shadows,
+detailed 3D models,
+clean polished animation,
+fun YouTube cartoon style.
 
-def concat(clips,out,audio):
-    with tempfile.NamedTemporaryFile("w",suffix=".txt",delete=False,encoding="utf-8") as f:
-        for c in clips: f.write("file '"+str(Path(c).resolve())+"'\n")
-        lf=f.name
-    subprocess.run([FFMPEG,"-y","-f","concat","-safe","0","-i",lf,"-i",str(audio),"-c:v","libx264","-c:a","aac","-shortest","-pix_fmt","yuv420p",str(out)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-    Path(lf).unlink(missing_ok=True)
+CHARACTERS:
+{char_text}
 
-def generate_video(job,mode="demo",progress_callback=None):
-    size=(1280,720) if job["format"]=="16:9" else (720,1280)
-    work=OUT/job["id"]; work.mkdir(parents=True,exist_ok=True); clips=[]
-    scenes=job["scenes"]
-    for i,s in enumerate(scenes):
-        if progress_callback: progress_callback(i/max(1,len(scenes))*80,f"Scene {i+1}/{len(scenes)} बन रहा है...")
-        img=work/f"scene_{i+1:03d}.jpg"
-        (ai_image(s["prompt"],size) if mode=="ai" else placeholder(s["prompt"],size)).save(img,quality=90)
-        clip=work/f"clip_{i+1:03d}.mp4"; scene_clip(img,clip,s.get("duration",6),size); clips.append(clip)
-    if progress_callback: progress_callback(85,"Voice तैयार हो रही है...")
-    audio=work/"voice.mp3"; tts(job["story"],job["language"],audio)
-    if progress_callback: progress_callback(95,"Final MP4 assemble हो रहा है...")
-    out=OUT/f"CartoonFlow_{job['id']}.mp4"; concat(clips,out,audio)
-    if progress_callback: progress_callback(100,"Complete")
-    return out
+SCENE:
+{scene}
+
+ACTION:
+Animate the characters naturally.
+Keep the characters visually consistent with the descriptions.
+Use believable body movement, facial expressions and camera movement.
+
+CAMERA:
+Cinematic medium shot, occasional gentle camera movement,
+clear subject framing, smooth motion.
+
+IMPORTANT:
+No text on screen.
+No subtitles inside the generated video.
+No watermark.
+No horror.
+No violence.
+Family friendly.
+
+Language/context: {language}
+"""
+
+
+def submit_pollo(prompt, api_key, aspect_ratio="16:9"):
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key
+    }
+
+    payload = {
+        "input": {
+            "prompt": prompt,
+            "resolution": "480p",
+            "duration": 10,
+            "aspectRatio": aspect_ratio,
+            "generateAudio": False
+        }
+    }
+
+    r = requests.post(
+        POLLO_URL,
+        headers=headers,
+        json=payload,
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    data = r.json()
+
+    task_id = data.get("taskId")
+
+    if not task_id:
+        raise RuntimeError(f"Pollo task ID नहीं मिला: {data}")
+
+    return task_id
+
+
+def check_pollo(task_id, api_key):
+    url = f"https://pollo.ai/api/platform/v1/generation/{task_id}/status"
+
+    headers = {
+        "x-api-key": api_key
+    }
+
+    r = requests.get(
+        url,
+        headers=headers,
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    return r.json()
+
+
+def wait_for_video(task_id, api_key, timeout=900):
+    start = time.time()
+
+    while True:
+
+        data = check_pollo(task_id, api_key)
+
+        generations = data.get("generations", [])
+
+        if generations:
+
+            g = generations[0]
+
+            status = g.get("status")
+
+            if status == "succeeded":
+
+                video_url = g.get("url")
+
+                if video_url:
+                    return video_url
+
+            if status in ["failed", "error"]:
+                raise RuntimeError(
+                    g.get("failMsg") or "Pollo video generation failed"
+                )
+
+        if time.time() - start > timeout:
+            raise TimeoutError("Video generation timeout")
+
+        time.sleep(8)
+
+
+def download_video(url, output):
+    r = requests.get(
+        url,
+        stream=True,
+        timeout=300
+    )
+
+    r.raise_for_status()
+
+    with open(output, "wb") as f:
+        for chunk in r.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+
+
+def concat_videos(video_files, final_file):
+
+    list_file = Path(final_file).parent / "videos.txt"
+
+    with open(list_file, "w", encoding="utf-8") as f:
+
+        for video in video_files:
+            safe_path = str(Path(video).resolve()).replace("'", "'\\''")
+
+            f.write(
+                f"file '{safe_path}'\n"
+            )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(list_file),
+        "-c",
+        "copy",
+        str(final_file)
+    ]
+
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    if result.returncode != 0:
+
+        raise RuntimeError(
+            "FFmpeg error:\n" + result.stderr[-4000:]
+        )
+
+    return final_file
+
+
+def render_job(job, api_key, progress_callback=None):
+
+    job_id = job["id"]
+
+    work = Path("data") / "renders" / job_id
+    work.mkdir(parents=True, exist_ok=True)
+
+    scenes = job["scenes"]
+    characters = job["characters"]
+    language = job["language"]
+
+    aspect_ratio = (
+        "16:9"
+        if job["format"].startswith("16")
+        else "9:16"
+    )
+
+    video_files = []
+
+    total = len(scenes)
+
+    for index, scene in enumerate(scenes):
+
+        output = work / f"scene_{index + 1:03d}.mp4"
+
+        if output.exists():
+            video_files.append(str(output))
+            continue
+
+        prompt = make_prompt(
+            scene["prompt"],
+            characters,
+            language
+        )
+
+        if progress_callback:
+            progress_callback(
+                index + 1,
+                total,
+                f"AI scene {index + 1}/{total} generate हो रहा है..."
+            )
+
+        task_id = submit_pollo(
+            prompt,
+            api_key,
+            aspect_ratio
+        )
+
+        video_url = wait_for_video(
+            task_id,
+            api_key
+        )
+
+        download_video(
+            video_url,
+            output
+        )
+
+        video_files.append(str(output))
+
+    final_file = work / f"CartoonFlow_{job_id}.mp4"
+
+    concat_videos(
+        video_files,
+        final_file
+    )
+
+    return str(final_file)
