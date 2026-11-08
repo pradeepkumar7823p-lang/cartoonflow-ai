@@ -1,14 +1,20 @@
 {
-  "version": "5.0",
-  "queue_states": [
-    "Queued",
-    "Generating",
-    "Assembling",
-    "Complete",
-    "Failed"
-  ],
-  "render_modes": {
-    "demo": "local MP4 scene-card renderer",
-    "ai": "external provider adapter placeholder"
+  "job_input": {
+    "story": "string",
+    "language": "Hindi|English|Hinglish",
+    "format": "16:9|9:16",
+    "minutes": "1-4",
+    "characters": "array",
+    "reference_image": "optional"
+  },
+  "scene_output": {
+    "duration_seconds": 10,
+    "image_prompt": "string",
+    "video_prompt": "string",
+    "video_url": "string"
+  },
+  "final_output": {
+    "mp4": "string",
+    "status": "Complete|Failed"
   }
 }
