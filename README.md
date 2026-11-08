@@ -1,39 +1,9 @@
+# CartoonFlow AI v4
+Working Android-first Streamlit dashboard + MP4 renderer.
 
-# CartoonFlow AI Android-first v3
+Demo mode: no AI API key; makes a real MP4 with scene cards, camera motion and TTS.
+AI mode: uses the current Pollinations API for scene images. Put `POLLINATIONS_API_KEY` in Streamlit Secrets.
 
-## What this version provides
-- Mobile-friendly Streamlit dashboard
-- Story input
-- Character cards with fixed appearance
-- 3–4 minute scene planning (30–40 scenes)
-- Up to 5 active jobs in the queue
-- 16:9 YouTube / 9:16 Shorts
-- Downloadable production manifests
+Current Pollinations documentation says authenticated API access is required. Provider limits/charges can apply.
 
-## Run
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-For Android use, host this app on a web server and open its URL in Chrome. Add it to the home screen for an app-like experience.
-
-## Important architecture
-The phone is only the controller. Actual image-to-video rendering should run on a GPU backend. The queue manifest is designed to connect to:
-1. Character reference image storage
-2. Image generation
-3. Image-to-video generation
-4. TTS
-5. FFmpeg assembly
-6. Object storage
-7. Download link
-
-The 5-job queue is a workflow limit, not a promise that five jobs can render simultaneously on free infrastructure.
-
-## Production adapter contract
-A backend worker can read `data/jobs.json`, claim a `Queued` job, render all scenes, update status, and save the final MP4 path.
-
-Example states:
-Queued -> Generating -> Assembling -> Complete
-or
-Queued -> Generating -> Failed
+The renderer is intentionally modular: the scene animation function can later be replaced by a true image-to-video GPU model.
