@@ -1,7 +1,7 @@
-fastapi==0.115.12
-uvicorn[standard]==0.34.0
-jinja2==3.1.6
-python-multipart==0.0.20
-fal-client==0.9.1
-edge-tts==7.0.0
-python-dotenv==1.1.0
+fastapi
+uvicorn[standard]
+python-multipart
+fal-client
+edge-tts
+httpx
+python-dotenv
