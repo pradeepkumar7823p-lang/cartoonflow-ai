@@ -1,1114 +1,424 @@
 import streamlit as st
 from pathlib import Path
 import json
+import re
 import uuid
 import datetime
 import subprocess
 import shutil
+import textwrap
+import math
 
 BASE = Path(__file__).parent
 DATA = BASE / "data"
+OUTPUT = BASE / "output"
 DATA.mkdir(exist_ok=True)
-
+OUTPUT.mkdir(exist_ok=True)
 JOBS = DATA / "jobs.json"
-OUTPUTS = DATA / "outputs"
-OUTPUTS.mkdir(exist_ok=True)
 
 if not JOBS.exists():
     JOBS.write_text("[]", encoding="utf-8")
 
-
 st.set_page_config(
     page_title="CartoonFlow AI",
     page_icon="🎬",
-    layout="wide"
+    layout="wide",
 )
-
-
-# =========================
-# JOB DATABASE
-# =========================
 
 def load_jobs():
     try:
-        return json.loads(
-            JOBS.read_text(encoding="utf-8")
-        )
+        return json.loads(JOBS.read_text(encoding="utf-8"))
     except Exception:
         return []
 
-
 def save_jobs(jobs):
     JOBS.write_text(
-        json.dumps(
-            jobs,
-            ensure_ascii=False,
-            indent=2
-        ),
-        encoding="utf-8"
+        json.dumps(jobs, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
-
-# =========================
-# SCENE GENERATOR
-# =========================
-
-def make_scenes(story, characters, minutes):
-
-    total_scenes = int(minutes) * 10
-
-    parts = [
-        x.strip()
-        for x in story.replace("\n", " ").split("।")
-        if x.strip()
-    ]
+def make_scenes(story, chars, minutes):
+    count = int(minutes * 10)  # 6 seconds per scene
+    parts = [x.strip() for x in re.split(r"(?<=[.!?।])\s+|\n+", story) if x.strip()]
 
     if not parts:
         parts = [
-            "कहानी शुरू होती है।",
-            "हीरो अपने दोस्त के साथ गाँव में जाता है।",
-            "उन्हें एक मजेदार समस्या दिखाई देती है।",
-            "दोनों समस्या को हल करने की कोशिश करते हैं।",
-            "अचानक कहानी में मजेदार मोड़ आता है।",
-            "सब मिलकर समस्या हल करते हैं।",
-            "कहानी खुशी के साथ समाप्त होती है।"
+            "गाँव की सुबह होती है।",
+            "हीरो और उसका दोस्त एक मजेदार काम शुरू करते हैं।",
+            "अचानक एक मजेदार समस्या आ जाती है।",
+            "दोनों मिलकर समस्या का हल खोजते हैं।",
+            "कहानी खुशहाल अंत के साथ खत्म होती है।",
         ]
 
     character_text = ", ".join(
-        f'{c["name"]}: {c["look"]}'
-        for c in characters
+        f"{c['name']} ({c['role']}): {c['look']}" for c in chars
     )
 
     scenes = []
-
-    for i in range(total_scenes):
-
-        action = parts[i % len(parts)]
-
-        scenes.append({
-            "scene": i + 1,
-            "duration": 6,
-            "prompt": (
-                "3D family friendly Indian cartoon animation. "
-                f"Characters: {character_text}. "
-                f"Action: {action}. "
-                "Keep exactly the same character faces, clothes, "
-                "body proportions and colors. "
-                "Bright cinematic village environment. "
-                "Expressive faces. "
-                "No text. No watermark."
-            )
-        })
-
+    for i in range(count):
+        line = parts[i % len(parts)]
+        scenes.append(
+            {
+                "scene": i + 1,
+                "duration": 6,
+                "prompt": (
+                    "3D family-friendly cartoon animation, cinematic village setting. "
+                    f"Characters: {character_text}. "
+                    f"Action: {line}. "
+                    "Keep every character's face, body proportions, hairstyle, "
+                    "clothes and colors consistent. Expressive faces, smooth camera "
+                    "movement, bright lighting, no text, no watermark."
+                ),
+            }
+        )
     return scenes
 
-
-# =========================
-# JOB CREATOR
-# =========================
-
-def create_job(
-    story,
-    language,
-    format_value,
-    minutes,
-    characters
-):
-
-    job = {
-        "id": str(uuid.uuid4())[:8],
-        "created": datetime.datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
-        ),
+def make_job(story, chars, lang, fmt, minutes):
+    job_id = str(uuid.uuid4())[:8]
+    return {
+        "id": job_id,
+        "created": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "status": "Queued",
-        "language": language,
-        "format": format_value,
+        "language": lang,
+        "format": "16:9" if fmt.startswith("16") else "9:16",
         "minutes": int(minutes),
         "story": story,
-        "characters": characters,
-        "scenes": make_scenes(
-            story,
-            characters,
-            minutes
-        ),
+        "characters": chars,
+        "scenes": make_scenes(story, chars, minutes),
         "output": None,
-        "error": None
+        "error": None,
     }
 
-    return job
-
-
-# =========================
-# FFMPEG
-# =========================
-
-def get_ffmpeg():
-
-    ffmpeg = shutil.which("ffmpeg")
-
-    if ffmpeg:
-        return ffmpeg
-
+def find_ffmpeg():
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
         return None
 
-
-# =========================
-# DEMO MP4 RENDERER
-# =========================
-
 def render_demo(job):
-
-    ffmpeg = get_ffmpeg()
-
-    if not ffmpeg:
-        raise RuntimeError(
-            "FFmpeg उपलब्ध नहीं है। "
-            "requirements.txt check करें।"
-        )
-
+    """
+    Creates a real MP4 demo without an AI API.
+    It uses generated cartoon-style scene cards and camera-motion effects.
+    Replace this function later with an image/video AI worker.
+    """
     from PIL import Image, ImageDraw, ImageFont
 
-    job_folder = (
-        OUTPUTS / job["id"]
-    )
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError(
+            "FFmpeg नहीं मिला। requirements.txt में imageio-ffmpeg रखें और app को restart करें."
+        )
 
-    frames_folder = (
-        job_folder / "frames"
-    )
+    out = OUTPUT / f"cartoonflow_{job['id']}.mp4"
+    temp_dir = OUTPUT / f"frames_{job['id']}"
+    temp_dir.mkdir(exist_ok=True)
 
-    frames_folder.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    if job["format"] == "16:9":
-
-        W = 1280
-        H = 720
-
+    fmt = job["format"]
+    if fmt == "16:9":
+        W, H = 1280, 720
     else:
+        W, H = 720, 1280
 
-        W = 720
-        H = 1280
-
-    font_candidates = [
-
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"
-
-    ]
-
-    font_path = next(
-        (
-            p for p in font_candidates
-            if Path(p).exists()
-        ),
-        None
-    )
-
-    if font_path:
-
-        big_size = max(
-            30,
-            W // 22
-        )
-
-        small_size = max(
-            20,
-            W // 40
-        )
-
-        big_font = ImageFont.truetype(
-            font_path,
-            big_size
-        )
-
-        small_font = ImageFont.truetype(
-            font_path,
-            small_size
-        )
-
-    else:
-
-        big_font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
-
+    fps = 12
     scenes = job["scenes"]
 
-    total = len(scenes)
+    try:
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        ]
+        font_path = next((p for p in font_paths if Path(p).exists()), None)
+        font = ImageFont.truetype(font_path, 42) if font_path else ImageFont.load_default()
+        small = ImageFont.truetype(font_path, 28) if font_path else ImageFont.load_default()
 
-    # Create scene images
+        # Demo uses 1 generated frame every 0.25 sec to keep cloud rendering practical.
+        # FFmpeg then creates the requested 6-second scene duration.
+        for idx, scene in enumerate(scenes, start=1):
+            img = Image.new("RGB", (W, H), (242, 231, 200))
+            d = ImageDraw.Draw(img)
 
-    for index, scene in enumerate(scenes):
+            # simple cartoon village background
+            horizon = int(H * 0.58)
+            d.rectangle([0, horizon, W, H], fill=(126, 190, 95))
+            d.rectangle([0, 0, W, horizon], fill=(150, 205, 245))
+            d.ellipse([W - 180, 55, W - 70, 165], fill=(255, 220, 90))
 
-        image = Image.new(
-            "RGB",
-            (W, H),
-            (245, 235, 210)
-        )
+            # houses
+            for x in range(60, W, max(260, W // 4)):
+                y = horizon - 120
+                d.rectangle([x, y, x + 150, horizon], fill=(230, 170, 105))
+                d.polygon([(x - 15, y), (x + 75, y - 80), (x + 165, y)], fill=(170, 85, 60))
 
-        draw = ImageDraw.Draw(image)
+            # character placeholders as friendly cartoon circles/bodies
+            colors = [(250, 210, 170), (180, 190, 200), (245, 190, 120), (180, 230, 150)]
+            base_y = horizon - 15
+            for ci, c in enumerate(job["characters"][:4]):
+                cx = int(W * (0.2 + 0.2 * ci))
+                cy = base_y - 130
+                skin = colors[ci % len(colors)]
+                d.ellipse([cx - 45, cy - 45, cx + 45, cy + 45], fill=skin, outline=(50, 50, 50), width=3)
+                d.rectangle([cx - 55, cy + 45, cx + 55, cy + 155], fill=(70 + ci * 30, 120, 190))
+                d.ellipse([cx - 25, cy - 18, cx - 15, cy - 8], fill=(20, 20, 20))
+                d.ellipse([cx + 15, cy - 18, cx + 25, cy - 8], fill=(20, 20, 20))
+                d.arc([cx - 20, cy - 5, cx + 20, cy + 25], 0, 180, fill=(80, 30, 30), width=3)
+                d.text((cx - 60, cy + 175), c["name"], font=small, fill=(30, 30, 30))
 
-        padding = int(
-            min(W, H) * 0.08
-        )
+            # scene title
+            title = f"Scene {idx}/{len(scenes)}"
+            d.rounded_rectangle([25, 20, W - 25, 92], radius=18, fill=(255, 255, 255))
+            d.text((45, 38), title, font=font, fill=(35, 35, 35))
 
-        draw.rounded_rectangle(
-            (
-                padding,
-                padding,
-                W - padding,
-                H - padding
-            ),
-            radius=30,
-            fill=(255, 248, 235),
-            outline=(80, 80, 80),
-            width=4
-        )
+            # story line
+            text = scene["prompt"]
+            wrapped = textwrap.fill(text, width=48 if fmt == "9:16" else 90)
+            box_y = int(H * 0.72)
+            d.rounded_rectangle([35, box_y, W - 35, H - 35], radius=20, fill=(255, 255, 255))
+            d.multiline_text((55, box_y + 25), wrapped, font=small, fill=(40, 40, 40), spacing=8)
 
-        title = (
-            f"CartoonFlow AI • "
-            f"Scene {scene['scene']}/{total}"
-        )
+            frame = temp_dir / f"scene_{idx:03d}.jpg"
+            img.save(frame, quality=90)
 
-        draw.text(
-            (
-                padding + 25,
-                padding + 25
-            ),
-            title,
-            font=small_font,
-            fill=(30, 30, 30)
-        )
+        # Build the MP4 from scene cards. Each image lasts 6 seconds.
+        concat = temp_dir / "concat.txt"
+        with concat.open("w", encoding="utf-8") as f:
+            for idx in range(1, len(scenes) + 1):
+                frame = temp_dir / f"scene_{idx:03d}.jpg"
+                f.write(f"file '{frame.as_posix()}'\n")
+                f.write("duration 6\n")
+            last = temp_dir / f"scene_{len(scenes):03d}.jpg"
+            f.write(f"file '{last.as_posix()}'\n")
 
-        character_names = " • ".join(
-            c["name"]
-            for c in job["characters"]
-        )
+        cmd = [
+            ffmpeg, "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat),
+            "-vf", f"scale={W}:{H},format=yuv420p",
+            "-r", str(fps),
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-movflags", "+faststart",
+            str(out),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr[-3000:])
 
-        draw.text(
-            (
-                padding + 25,
-                padding + 80
-            ),
-            character_names,
-            font=small_font,
-            fill=(70, 70, 70)
-        )
+        return out
 
-        action = (
-            scene["prompt"]
-            .split("Action:", 1)[-1]
-            .split("Keep exactly", 1)[0]
-            .strip()
-        )
-
-        max_width = (
-            W - 2 * (padding + 55)
-        )
-
-        words = action.split()
-
-        lines = []
-        current = ""
-
-        for word in words:
-
-            test = (
-                current + " " + word
-            ).strip()
-
-            box = draw.textbbox(
-                (0, 0),
-                test,
-                font=big_font
-            )
-
-            if box[2] <= max_width:
-
-                current = test
-
-            else:
-
-                if current:
-                    lines.append(current)
-
-                current = word
-
-        if current:
-            lines.append(current)
-
-        y = (
-            H // 2
-            - len(lines) * 30
-        )
-
-        for line in lines[:8]:
-
-            box = draw.textbbox(
-                (0, 0),
-                line,
-                font=big_font
-            )
-
-            text_width = (
-                box[2] - box[0]
-            )
-
-            x = (
-                W - text_width
-            ) / 2
-
-            draw.text(
-                (x, y),
-                line,
-                font=big_font,
-                fill=(25, 25, 25)
-            )
-
-            y += 60
-
-        draw.text(
-            (
-                padding + 25,
-                H - padding - 45
-            ),
-            "CartoonFlow AI Demo Render",
-            font=small_font,
-            fill=(100, 100, 100)
-        )
-
-        frame_path = (
-            frames_folder /
-            f"scene_{index:03d}.png"
-        )
-
-        image.save(frame_path)
-
-    # =========================
-    # CREATE VIDEO
-    # =========================
-
-    output_file = (
-        OUTPUTS /
-        f"CartoonFlow_{job['id']}_"
-        f"{job['format'].replace(':', 'x')}.mp4"
-    )
-
-    concat_file = (
-        job_folder /
-        "concat.txt"
-    )
-
-    with concat_file.open(
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        for index in range(total):
-
-            frame = (
-                frames_folder /
-                f"scene_{index:03d}.png"
-            )
-
-            f.write(
-                f"file '{frame.as_posix()}'\n"
-            )
-
-            f.write(
-                "duration 6\n"
-            )
-
-        last_frame = (
-            frames_folder /
-            f"scene_{total - 1:03d}.png"
-        )
-
-        f.write(
-            f"file '{last_frame.as_posix()}'\n"
-        )
-
-    command = [
-
-        ffmpeg,
-
-        "-y",
-
-        "-f",
-        "concat",
-
-        "-safe",
-        "0",
-
-        "-i",
-        str(concat_file),
-
-        "-vf",
-        f"scale={W}:{H},format=yuv420p",
-
-        "-r",
-        "30",
-
-        "-movflags",
-        "+faststart",
-
-        str(output_file)
-    ]
-
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=900
-    )
-
-    if result.returncode != 0:
-
-        raise RuntimeError(
-            result.stderr[-3000:]
-        )
-
-    return str(output_file)
-
-
-# =========================
-# HEADER
-# =========================
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 st.title("🎬 CartoonFlow AI")
-
-st.caption(
-    "Android-first 3D cartoon video production dashboard"
-)
-
-
-# =========================
-# SIDEBAR
-# =========================
+st.caption("Android-first 3D cartoon video production dashboard")
 
 with st.sidebar:
-
     st.header("Project")
-
-    language = st.selectbox(
-        "Language",
-        [
-            "Hindi",
-            "English",
-            "Hinglish"
-        ]
-    )
-
-    video_format = st.selectbox(
-        "Format",
-        [
-            "16:9 YouTube",
-            "9:16 Shorts"
-        ]
-    )
-
-    minutes = st.slider(
-        "Video length",
-        min_value=3,
-        max_value=4,
-        value=4
-    )
+    lang = st.selectbox("Language", ["Hindi", "English", "Hinglish"])
+    fmt = st.selectbox("Format", ["16:9 YouTube", "9:16 Shorts"])
+    minutes = st.slider("Video length", 3, 4, 4)
 
     st.divider()
-
     st.header("Characters")
-
-    character_count = st.number_input(
-        "Characters",
-        min_value=1,
-        max_value=6,
-        value=2,
-        step=1
-    )
+    count = st.number_input("Characters", min_value=1, max_value=6, value=2, step=1)
 
     defaults = [
-
-        (
-            "Golu",
-            "Hero",
-            "7-year-old Indian boy, "
-            "round friendly face, black hair, "
-            "yellow T-shirt, blue shorts, red shoes"
-        ),
-
-        (
-            "Motu",
-            "Friend",
-            "cute gray elephant, "
-            "big expressive eyes, blue scarf, "
-            "friendly smile"
-        )
+        ("Golu", "Hero", "7-year-old Indian boy, round friendly face, black hair, yellow T-shirt, blue shorts, red shoes"),
+        ("Motu", "Friend", "cute gray elephant, big expressive eyes, blue scarf, friendly smile"),
     ]
 
-    characters = []
-
-    for i in range(
-        int(character_count)
-    ):
-
-        if i < len(defaults):
-
-            default = defaults[i]
-
-        else:
-
-            default = (
-                f"Character {i + 1}",
-                "Supporting",
-                "friendly 3D cartoon character"
-            )
-
-        with st.expander(
-            default[0],
-            expanded=(i < 2)
-        ):
-
-            name = st.text_input(
-                "Name",
-                default[0],
-                key=f"name_{i}"
-            )
-
-            role = st.text_input(
-                "Role",
-                default[1],
-                key=f"role_{i}"
-            )
-
-            appearance = st.text_area(
-                "Fixed appearance",
-                default[2],
-                key=f"appearance_{i}",
-                height=90
-            )
-
-            characters.append({
-                "name": name,
-                "role": role,
-                "look": appearance
-            })
-
-
-# =========================
-# STORY
-# =========================
+    chars = []
+    for i in range(int(count)):
+        d = defaults[i] if i < len(defaults) else (
+            f"Character {i+1}", "Supporting", "friendly 3D cartoon character"
+        )
+        with st.expander(d[0], expanded=(i < 2)):
+            name = st.text_input("Name", d[0], key=f"name_{i}")
+            role = st.text_input("Role", d[1], key=f"role_{i}")
+            look = st.text_area("Fixed appearance", d[2], key=f"look_{i}", height=90)
+            chars.append({"name": name, "role": role, "look": look})
 
 story = st.text_area(
     "📜 कहानी",
     value=(
-        "गोलू और मोटू हाथी गाँव से जंगल की ओर जाते हैं। "
-        "रास्ते में उन्हें एक मजेदार आम मिलता है। "
+        "गोलू और मोटू गाँव में जंगल की ओर जाते हैं। "
+        "रास्ते में उन्हें एक चमकता हुआ आम मिलता है। "
         "दोनों आम को लेकर मजेदार परेशानी में पड़ जाते हैं। "
-        "आखिर में दोनों मिलकर समस्या हल करते हैं और "
-        "खुशी-खुशी घर लौटते हैं।"
+        "आखिर में दोनों मिलकर समस्या हल करते हैं और खुशी-खुशी गाँव लौट आते हैं।"
     ),
-    height=170
+    height=180,
 )
 
+c1, c2, c3 = st.columns(3)
 
-# =========================
-# BUTTONS
-# =========================
+with c1:
+    create = st.button("✨ Create Job", type="primary", use_container_width=True)
 
-col1, col2, col3 = st.columns(3)
+with c2:
+    demo = st.button("🎭 Demo Story", use_container_width=True)
 
-with col1:
+with c3:
+    refresh = st.button("🔄 Refresh Queue", use_container_width=True)
 
-    create_job_button = st.button(
-        "✨ Create Job",
-        type="primary",
-        use_container_width=True
+if demo:
+    story = (
+        "गोलू और मोटू गाँव में रास्ता भूल जाते हैं। "
+        "उन्हें एक छोटी नदी मिलती है। "
+        "मोटू मजेदार तरीके से नदी पार करने की कोशिश करता है। "
+        "गोलू हँसते-हँसते उसे सही रास्ता दिखाता है। "
+        "दोनों सुरक्षित घर लौट आते हैं।"
     )
-
-with col2:
-
-    demo_button = st.button(
-        "🎭 Demo Story",
-        use_container_width=True
-    )
-
-with col3:
-
-    refresh_button = st.button(
-        "🔄 Refresh Queue",
-        use_container_width=True
-    )
-
-
-if demo_button:
-
-    st.session_state["story"] = (
-        "गोलू और मोटू हाथी गाँव में एक आम ढूँढते हैं। "
-        "दोनों आम को लेकर मजेदार बहस करते हैं। "
-        "अचानक आम लुढ़ककर तालाब में चला जाता है। "
-        "दोनों मिलकर उसे बाहर निकालते हैं और "
-        "खुशी से घर लौटते हैं।"
-    )
-
+    st.session_state["story"] = story
     st.rerun()
 
-
 if "story" in st.session_state:
-
     story = st.session_state["story"]
 
-
-# =========================
-# CREATE JOB
-# =========================
-
-if create_job_button:
-
+if create:
     jobs = load_jobs()
+    active = sum(1 for x in jobs if x.get("status") in ["Queued", "Generating", "Assembling"])
 
-    active_jobs = sum(
-        1
-        for job in jobs
-        if job.get("status")
-        in [
-            "Queued",
-            "Generating",
-            "Assembling"
-        ]
-    )
-
-    if active_jobs >= 5:
-
-        st.error(
-            "Queue में पहले से 5 active jobs हैं।"
-        )
-
+    if active >= 5:
+        st.error("Queue में पहले से 5 active jobs हैं।")
     else:
-
-        job = create_job(
-            story,
-            language,
-            (
-                "16:9"
-                if video_format.startswith("16")
-                else "9:16"
-            ),
-            minutes,
-            characters
-        )
-
-        jobs.insert(
-            0,
-            job
-        )
-
+        job = make_job(story, chars, lang, fmt, minutes)
+        jobs.insert(0, job)
         save_jobs(jobs)
-
-        st.success(
-            f"✅ Job {job['id']} queue में जोड़ दिया गया।"
-        )
-
+        st.success(f"Job {job['id']} queue में जोड़ दिया गया।")
         st.rerun()
 
-
-# =========================
-# RENDER
-# =========================
-
 st.divider()
+st.subheader("🚀 Render Video")
 
-st.subheader(
-    "🚀 Render Video"
+render_mode = st.radio(
+    "Rendering mode",
+    ["Demo renderer (no API key)", "AI mode (external API)"],
+    horizontal=True,
 )
 
-jobs = load_jobs()
-
-
-if jobs:
-
-    render_mode = st.radio(
-        "Rendering mode",
-        [
-            "Demo render",
-            "AI images + motion"
-        ],
-        index=0,
-        horizontal=True
+if render_mode.startswith("Demo"):
+    st.info(
+        "Demo mode बिना AI API key के एक वास्तविक MP4 बनाता है। "
+        "यह test/render pipeline है, photoreal AI animation नहीं।"
+    )
+else:
+    st.warning(
+        "AI mode के लिए external image/video provider API जोड़ना होगा। "
+        "API key और provider limits/charges लागू हो सकते हैं।"
     )
 
-    if render_mode == "AI images + motion":
+jobs = load_jobs()
+queued = [j for j in jobs if j.get("status") == "Queued"]
 
-        st.warning(
-            "AI mode अभी external AI provider "
-            "API के लिए रखा गया है। "
-            "पहले Demo render से MP4 pipeline test करें।"
-        )
+if queued:
+    selected_id = st.selectbox(
+        "Render करने के लिए Job चुनें",
+        [j["id"] for j in queued],
+    )
 
-    queued_jobs = [
-        job
-        for job in jobs
-        if job.get("status") == "Queued"
-    ]
+    if st.button("▶️ Start Rendering", type="primary", use_container_width=True):
+        job = next((j for j in jobs if j["id"] == selected_id), None)
 
-    if queued_jobs:
-
-        selected_job = st.selectbox(
-            "Queued job चुनें",
-            [
-                job["id"]
-                for job in queued_jobs
-            ]
-        )
-
-        if st.button(
-            "▶️ Start Rendering",
-            type="primary",
-            use_container_width=True
-        ):
-
-            if render_mode == "AI images + motion":
-
-                st.info(
-                    "AI mode के लिए API integration "
-                    "अभी बाकी है। Demo render चुनें।"
+        if job:
+            if render_mode.startswith("AI"):
+                st.error(
+                    "AI mode अभी external API worker से connect नहीं है। "
+                    "पहले Demo renderer test करें."
                 )
-
             else:
-
-                selected = next(
-                    job
-                    for job in jobs
-                    if job["id"]
-                    == selected_job
-                )
-
-                selected["status"] = "Generating"
-
-                save_jobs(jobs)
-
-                progress = st.progress(
-                    0
-                )
-
-                status_text = st.empty()
-
                 try:
-
-                    status_text.info(
-                        "🎬 MP4 rendering शुरू..."
-                    )
-
-                    output = render_demo(
-                        selected
-                    )
-
-                    progress.progress(
-                        100
-                    )
-
-                    selected["status"] = (
-                        "Complete"
-                    )
-
-                    selected["output"] = (
-                        output
-                    )
-
-                    selected["error"] = None
-
+                    job["status"] = "Generating"
                     save_jobs(jobs)
 
-                    st.success(
-                        "🎉 MP4 तैयार है!"
-                    )
+                    with st.spinner("MP4 render हो रहा है..."):
+                        output = render_demo(job)
 
-                    st.rerun()
-
-                except Exception as error:
-
-                    selected["status"] = (
-                        "Failed"
-                    )
-
-                    selected["error"] = (
-                        str(error)
-                    )
-
+                    job["status"] = "Complete"
+                    job["output"] = str(output.relative_to(BASE))
                     save_jobs(jobs)
 
-                    st.error(
-                        "❌ Rendering fail हुआ।"
-                    )
+                    st.success("MP4 तैयार है।")
+                    st.video(str(output))
+                    with open(output, "rb") as video_file:
+                        st.download_button(
+                            "⬇️ Download MP4",
+                            data=video_file,
+                            file_name=output.name,
+                            mime="video/mp4",
+                            use_container_width=True,
+                        )
 
-                    st.exception(
-                        error
-                    )
-
-    else:
-
-        st.info(
-            "कोई queued job नहीं है।"
-        )
-
-
-# =========================
-# QUEUE MANAGEMENT
-# =========================
+                except Exception as e:
+                    job["status"] = "Failed"
+                    job["error"] = str(e)
+                    save_jobs(jobs)
+                    st.error(f"Render failed: {e}")
 
 st.divider()
-
-st.subheader(
-    "🧹 Queue Management"
-)
-
-q1, q2 = st.columns(2)
-
-
-with q1:
-
-    if st.button(
-        "🗑️ Clear completed/failed",
-        use_container_width=True
-    ):
-
-        remaining = [
-            job
-            for job in load_jobs()
-            if job.get("status")
-            not in [
-                "Complete",
-                "Failed"
-            ]
-        ]
-
-        save_jobs(
-            remaining
-        )
-
-        st.success(
-            "Completed/failed jobs हटाए गए।"
-        )
-
-        st.rerun()
-
-
-with q2:
-
-    if st.button(
-        "⚠️ Clear ALL jobs",
-        use_container_width=True
-    ):
-
-        save_jobs([])
-
-        st.success(
-            "सभी jobs clear कर दी गईं।"
-        )
-
-        st.rerun()
-
-
-# =========================
-# GENERATION QUEUE
-# =========================
-
-st.divider()
-
-st.subheader(
-    "🎞️ Generation Queue"
-)
+st.subheader("🎞️ Generation Queue")
 
 jobs = load_jobs()
-
 
 if not jobs:
-
-    st.info(
-        "अभी कोई video job नहीं है।"
-    )
-
+    st.info("अभी कोई video job नहीं है।")
 else:
+    for j in jobs:
+        with st.container(border=True):
+            a, b, c = st.columns([1, 1, 1])
+            a.write(f"**Job:** {j['id']}")
+            b.write(f"**Length:** {j['minutes']} min")
+            c.write(f"**Format:** {j['format']}")
 
-    for job in jobs:
-
-        with st.container(
-            border=True
-        ):
-
-            c1, c2, c3 = st.columns(
-                [2, 2, 2]
+            st.write(
+                f"Language: {j['language']} | Status: **{j['status']}**"
             )
 
-            with c1:
+            if j.get("error"):
+                st.error(j["error"])
 
-                st.write(
-                    f"**Job:** `{job['id']}`"
-                )
+            if j.get("output"):
+                output_path = BASE / j["output"]
+                if output_path.exists():
+                    with open(output_path, "rb") as vf:
+                        st.download_button(
+                            "⬇️ Download MP4",
+                            data=vf,
+                            file_name=output_path.name,
+                            mime="video/mp4",
+                            key=f"dl_{j['id']}",
+                        )
 
-                st.write(
-                    f"Length: "
-                    f"{job['minutes']} min"
-                )
+            with st.expander("🎬 Scenes / Production Manifest"):
+                st.write(f"Characters: {', '.join(x['name'] for x in j['characters'])}")
+                st.write(f"Scenes: {len(j['scenes'])}")
+                st.json(j["scenes"][:3])
 
-            with c2:
-
-                st.write(
-                    f"Format: "
-                    f"{job['format']}"
-                )
-
-                st.write(
-                    f"Language: "
-                    f"{job['language']}"
-                )
-
-            with c3:
-
-                status = job.get(
-                    "status",
-                    "Queued"
-                )
-
-                if status == "Complete":
-
-                    st.success(
-                        "Complete"
-                    )
-
-                elif status == "Failed":
-
-                    st.error(
-                        "Failed"
-                    )
-
-                elif status == "Generating":
-
-                    st.warning(
-                        "Generating"
-                    )
-
-                else:
-
-                    st.info(
-                        "Queued"
-                    )
-
-            if (
-                job.get("output")
-                and Path(
-                    job["output"]
-                ).exists()
-            ):
-
-                with open(
-                    job["output"],
-                    "rb"
-                ) as video_file:
-
-                    st.download_button(
-                        "⬇️ Download MP4",
-                        data=video_file.read(),
-                        file_name=Path(
-                            job["output"]
-                        ).name,
-                        mime="video/mp4",
-                        key=(
-                            f"video_"
-                            f"{job['id']}"
-                        ),
-                        use_container_width=True
-                    )
-
-            if job.get("error"):
-
-                with st.expander(
-                    "❌ Error"
-                ):
-
-                    st.code(
-                        job["error"]
-                    )
-
-            with st.expander(
-                "🎬 Scenes / Production Manifest"
-            ):
-
-                st.write(
-                    "Characters: "
-                    + ", ".join(
-                        c["name"]
-                        for c in job["characters"]
-                    )
-                )
-
-                st.write(
-                    f"Scenes: "
-                    f"{len(job['scenes'])}"
-                )
-
-                st.download_button(
-                    "📄 Download Job JSON",
-                    data=json.dumps(
-                        job,
-                        ensure_ascii=False,
-                        indent=2
-                    ),
-                    file_name=(
-                        f"cartoonflow_"
-                        f"{job['id']}.json"
-                    ),
-                    mime="application/json",
-                    key=(
-                        f"json_"
-                        f"{job['id']}"
-                    )
-                )
-
-
-# =========================
-# BACKEND INFO
-# =========================
+            st.download_button(
+                "📄 Download Job JSON",
+                data=json.dumps(j, ensure_ascii=False, indent=2),
+                file_name=f"cartoonflow_{j['id']}.json",
+                mime="application/json",
+                key=f"json_{j['id']}",
+            )
 
 st.divider()
-
-st.subheader(
-    "⚙️ Production Backend"
-)
+st.subheader("⚙️ Production Backend")
 
 st.markdown(
     """
-**📱 Android phone = control panel**
+**Android phone = control panel**
 
-**Demo mode:** वास्तविक MP4 बनाता है।
+Current Demo pipeline:
 
-**Production AI chain:**
+**Story → scene plan → cartoon scene cards → 6-second scenes → MP4**
 
-Story  
-↓  
-Character consistency  
-↓  
-Scene images  
-↓  
-6-second animation clips  
-↓  
-Hindi/English voice  
-↓  
-Subtitles + SFX  
-↓  
-FFmpeg  
-↓  
-Final MP4
+For true AI animation, the next production adapter can be connected as:
+
+**Character reference → AI scene image → image-to-video clip → Hindi/English TTS → subtitles/SFX → FFmpeg → final MP4**
+
+The dashboard is intentionally separate from the GPU renderer so it can later use a cloud GPU without changing the Android interface.
 """
 )
-
-st.info(
-    "अभी Demo mode बिना API key के चलता है। "
-    "अगले चरण में इसी dashboard में वास्तविक "
-    "AI cartoon image/video generation जोड़ सकते हैं।"
-        )2

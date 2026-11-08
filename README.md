@@ -1,9 +1,15 @@
-# CartoonFlow AI v4
-Working Android-first Streamlit dashboard + MP4 renderer.
+# CartoonFlow AI v5
 
-Demo mode: no AI API key; makes a real MP4 with scene cards, camera motion and TTS.
-AI mode: uses the current Pollinations API for scene images. Put `POLLINATIONS_API_KEY` in Streamlit Secrets.
+This version fixes the syntax problem in `app.py` and provides a working Streamlit dashboard.
 
-Current Pollinations documentation says authenticated API access is required. Provider limits/charges can apply.
+## Run
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-The renderer is intentionally modular: the scene animation function can later be replaced by a true image-to-video GPU model.
+## Demo renderer
+The Demo renderer creates a real MP4 without an external AI API. It is a pipeline test, not true AI-generated 3D animation.
+
+## Next step
+Connect the `render_demo()` function to an image/video AI GPU backend for real animated scenes.
